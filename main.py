@@ -8,8 +8,20 @@ from pyspark.ml.evaluation import MulticlassClassificationEvaluator
 import pandas as pd
 
 
-
-def process_df(df):
+def processing_df(df):
+    """
+    This function cleans up the dataframe
+    :param df: dataframe
+    :return: dataframe
+    """
+    # Dropping Unnecessary Columns
+    headers = df.columns
+    for column_name in headers:
+        if column_name != 'Date' \
+                and column_name != 'Description' \
+                and column_name != 'Amount' \
+                and column_name != 'Class':
+            df = df.drop(column_name)
 
     # Cleaning Date Column
     df = df.withColumn('Date', lpad(df['Date'], 10, '0')) \
@@ -28,6 +40,30 @@ def process_df(df):
         .withColumn("Amount", col("Amount").cast('double'))
 
     return df
+
+
+def tdif_vectorization(df):
+    """
+    TDIF vectorization of Dataframe
+    :param df: dataframe
+    :return: dataframe
+    """
+    qualification_indexer = StringIndexer(inputCol='Class', outputCol='qualificationIndex')
+    df1 = qualification_indexer.fit(df).transform(df)
+    df1 = df1.withColumn('qualificationIndex', col('qualificationIndex').cast('int'))
+    # df1.show()
+
+    # HashingTF
+    hashingTF = HashingTF(inputCol='Description', outputCol='rawFeatures')
+    featureData = hashingTF.transform(df1)
+
+    # IDF
+    idf = IDF(inputCol='rawFeatures', outputCol='features')
+    idfModel = idf.fit(featureData)
+    rescaledData = idfModel.transform(featureData)
+    new_data = rescaledData.select('qualificationIndex', 'features')
+    # new_data.show()
+    return new_data
 
 
 def main():
@@ -56,48 +92,10 @@ def main():
     df = spark.read.option("delimiter", ",") \
         .option('inferSchema', 'True') \
         .option("header", "true") \
-        .csv("jan expenses.csv")
+        .csv(csv_filename)
 
-    # Dropping Unnecessary Columns
-    headers = df.columns
-    for column_name in headers:
-        if column_name != 'Date' \
-                and column_name != 'Description' \
-                and column_name != 'Amount' \
-                and column_name != 'Class':
-            df = df.drop(column_name)
-
-    # Cleaning Date Column
-    df = df.withColumn('Date', lpad(df['Date'], 10, '0')) \
-        .withColumn('Date', to_date('Date', 'MM/dd/yyyy'))
-
-    # Cleaning Description Column
-    df = df.withColumn('Description', trim('Description')) \
-        .withColumn('Description', regexp_replace('Description', "[^a-zA-Z]+", ' ')) \
-        .withColumn('Description', lower('Description')) \
-        .withColumn('Description', split(col('Description'), ' ')) \
-        .withColumn('Description', when(size(expr("filter(Description, elem -> elem != '')")) == 0, lit(None))
-                    .otherwise(expr("filter(Description, elem -> elem != '')")))
-
-    # Cleaning Amount Column
-    df = df.withColumn('Amount', regexp_replace('Amount', '[$(,)]', '')) \
-        .withColumn("Amount", col("Amount").cast('double'))
-
-    qualification_indexer = StringIndexer(inputCol='Class', outputCol='qualificationIndex')
-    df1 = qualification_indexer.fit(df).transform(df)
-    df1 = df1.withColumn('qualificationIndex', col('qualificationIndex').cast('int'))
-    df1.show()
-
-    # HashingTF
-    hashingTF = HashingTF(inputCol='Description', outputCol='rawFeatures')
-    featureData = hashingTF.transform(df1)
-
-    # IDF
-    idf = IDF(inputCol='rawFeatures', outputCol='features')
-    idfModel = idf.fit(featureData)
-    rescaledData = idfModel.transform(featureData)
-    new_data = rescaledData.select('qualificationIndex', 'features')
-    # new_data.show()
+    df = processing_df(df)
+    new_data = tdif_vectorization(df)
 
     # Splitting Data:
     splits = new_data.randomSplit([0.8, 0.2], 1234)
@@ -110,6 +108,7 @@ def main():
 
     # Train the model
     model = nb.fit(train)
+    # model.save(spark, 'naive_bayes.model')
     prediction = model.transform(test)
     prediction = prediction.withColumn('qualificationIndex', col('qualificationIndex').cast('double'))
     prediction.show()
@@ -118,7 +117,6 @@ def main():
 
     accuracy = evaluator.evaluate(prediction)
     print("Test set accuracy = " + str(accuracy))
-
 
     spark.stop()
 
