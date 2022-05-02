@@ -24,8 +24,7 @@ def processing_df(df):
             df = df.drop(column_name)
 
     # Cleaning Date Column
-    df = df.withColumn('Date', lpad(df['Date'], 10, '0')) \
-        .withColumn('Date', to_date('Date', 'MM/dd/yyyy'))
+    df = df.withColumn('Date', to_date('Date', 'M/d/yyyy'))
 
     # Cleaning Description Column
     df = df.withColumn('Description', trim('Description')) \
@@ -61,7 +60,7 @@ def tdif_vectorization(df):
     idf = IDF(inputCol='rawFeatures', outputCol='features')
     idfModel = idf.fit(featureData)
     rescaledData = idfModel.transform(featureData)
-    new_data = rescaledData.select('qualificationIndex', 'features')
+    new_data = rescaledData.select('*')
     # new_data.show()
     return new_data
 
