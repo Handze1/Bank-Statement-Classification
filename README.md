@@ -5,7 +5,11 @@
   - Description
   - Amount
   - Class
-- Using pyspark create a pipeline to clean -> vectorize -> classify statements. 
+- Using pyspark create a pipeline to clean -> vectorize -> classification. 
+  - Cleaning: Dropping unneccessary columns, converting to Datetime, removing special characters/numbers in description and converting amount to type double
+  - Vectorize: Use TF-IDF, to mine text in the description column
+  - Classification: Using Naive Bayes Model to classify multinomial statements
+  
 
 <h2>Setup for Users:</h2>
 
