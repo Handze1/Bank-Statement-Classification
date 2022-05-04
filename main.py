@@ -11,8 +11,8 @@ import pandas as pd
 def processing_df(df):
     """
     This function cleans up the dataframe
-    :param df: dataframe
-    :return: dataframe
+    :param df: Dataframe
+    :return: Dataframe
     """
     # Dropping Unnecessary Columns
     headers = df.columns
@@ -37,7 +37,18 @@ def processing_df(df):
     # Cleaning Amount Column
     df = df.withColumn('Amount', regexp_replace('Amount', '[$(,)]', '')) \
         .withColumn("Amount", col("Amount").cast('double'))
+    return df
 
+
+def string_indexer(df):
+    """
+    Label indexer that maps a string column "Class" to label indices
+    :param df: Dataframe
+    :return: Dataframe
+    """
+    qualification_indexer = StringIndexer(inputCol='Class', outputCol='qualificationIndex')
+    df = qualification_indexer.fit(df).transform(df)
+    df = df.withColumn('qualificationIndex', col('qualificationIndex').cast('int'))
     return df
 
 
@@ -47,14 +58,9 @@ def tdif_vectorization(df):
     :param df: dataframe
     :return: dataframe
     """
-    qualification_indexer = StringIndexer(inputCol='Class', outputCol='qualificationIndex')
-    df1 = qualification_indexer.fit(df).transform(df)
-    df1 = df1.withColumn('qualificationIndex', col('qualificationIndex').cast('int'))
-    # df1.show()
-
     # HashingTF
     hashingTF = HashingTF(inputCol='Description', outputCol='rawFeatures')
-    featureData = hashingTF.transform(df1)
+    featureData = hashingTF.transform(df)
 
     # IDF
     idf = IDF(inputCol='rawFeatures', outputCol='features')
@@ -66,56 +72,74 @@ def tdif_vectorization(df):
 
 
 def main():
-
     # Using arg parse for command line to read test file for classification
     parser = argparse.ArgumentParser()
     parser.add_argument('--f', type=str, required=False)
-    parser.add_argument('--p', type=bool, required=False)
+    parser.add_argument('--p', type=str, required=False)
     args = parser.parse_args()
-    csv_filename = args.f
-    if args.p == True:
-        print('Yes')
 
+    # Creating Spark Session
     spark = SparkSession.builder \
         .appName("Bank Statement Classifier") \
         .master('local') \
         .getOrCreate()
 
-    # Test Data for classification
+    # Reading in Training Data Frame
+    train_data = spark.read.option("delimiter", ",") \
+        .option('inferSchema', 'True') \
+        .option("header", "true") \
+        .csv(args.f)
+
+    # Reading in Testing Data Frame
     test_data = spark.read.option("delimiter", ",") \
         .option('inferSchema', 'True') \
         .option("header", "true") \
-        .csv(csv_filename)
+        .csv(args.p)
 
-    # Training data for classification
-    df = spark.read.option("delimiter", ",") \
-        .option('inferSchema', 'True') \
-        .option("header", "true") \
-        .csv(csv_filename)
+    # Checking argparse arguments
+    if type(args.f) is str and type(args.p) is str:
+        # Calling Processing, string indexer, TDIF vectorization function on Training/Testing Data
+        # Testing Data does not Require string indexer because data has no class.
+        df_train = processing_df(train_data)
+        df_train = string_indexer(df_train)
+        df_train = tdif_vectorization(df_train)
+        df_test = processing_df(test_data)
+        df_test = tdif_vectorization(df_test)
+        print('Training and Testing Data Cleaned')
 
-    df = processing_df(df)
-    new_data = tdif_vectorization(df)
+        # Splitting Training Data to metrics
+        splits = df_train.randomSplit([0.8, 0.2], 1234)
+        train = splits[0]
+        test = splits[1]
 
-    # Splitting Data:
-    splits = new_data.randomSplit([0.8, 0.2], 1234)
-    train = splits[0]
-    test = splits[1]
-    # test.show()
+        # Creating the trainer and set its parameters
+        nb = NaiveBayes(labelCol='qualificationIndex', smoothing=1.0, modelType="multinomial")
 
-    # Creating the trainer and set its parameters
-    nb = NaiveBayes(labelCol='qualificationIndex', smoothing=1.0, modelType="multinomial")
+        # Training model
+        model = nb.fit(train)
+        prediction = model.transform(test)
+        prediction = prediction.withColumn('qualificationIndex', col('qualificationIndex').cast('double'))
+        # prediction.show()
 
-    # Train the model
-    model = nb.fit(train)
-    # model.save(spark, 'naive_bayes.model')
-    prediction = model.transform(test)
-    prediction = prediction.withColumn('qualificationIndex', col('qualificationIndex').cast('double'))
-    prediction.show()
-    evaluator = MulticlassClassificationEvaluator(labelCol="qualificationIndex", predictionCol="prediction",
-                                                  metricName="accuracy")
+        # Evaluation
+        acc = MulticlassClassificationEvaluator(labelCol="qualificationIndex", predictionCol="prediction",
+                                                metricName="accuracy")
+        f1 = MulticlassClassificationEvaluator(labelCol="qualificationIndex", predictionCol="prediction",
+                                               metricName="f1")
+        precision = MulticlassClassificationEvaluator(labelCol="qualificationIndex", predictionCol="prediction",
+                                                      metricName="precisionByLabel")
 
-    accuracy = evaluator.evaluate(prediction)
-    print("Test set accuracy = " + str(accuracy))
+        accuracy = acc.evaluate(prediction)
+        F1 = f1.evaluate(prediction)
+        Precision = precision.evaluate(prediction)
+
+        print("Test set accuracy = " + str(accuracy))
+        print("Test set f1 = " + str(F1))
+        print("Test set Precision = " + str(Precision))
+
+        # Predicting test file using trained model
+        predicting_test = model.transform(df_test)
+        predicting_test.show()
 
     spark.stop()
 
