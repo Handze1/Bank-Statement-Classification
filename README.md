@@ -20,5 +20,7 @@
 <h2>Running Script:</h2>
 
 - `python main.py --f <Training CSV> --p <Testing CSV>`
+- --f is the training file 
+- --p is the testing file for prediction
 
 

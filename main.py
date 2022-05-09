@@ -1,10 +1,11 @@
 # Imported Libraries:
+import argparse
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import *
-import argparse
 from pyspark.ml.feature import HashingTF, IDF, StringIndexer
-from pyspark.ml.classification import NaiveBayes
+from pyspark.ml.classification import NaiveBayes, NaiveBayesModel
 from pyspark.ml.evaluation import MulticlassClassificationEvaluator
+import os
 import pandas as pd
 
 
@@ -72,6 +73,7 @@ def tdif_vectorization(df):
 
 
 def main():
+
     # Using arg parse for command line to read test file for classification
     parser = argparse.ArgumentParser()
     parser.add_argument('--f', type=str, required=False)
@@ -84,30 +86,29 @@ def main():
         .master('local') \
         .getOrCreate()
 
-    # Reading in Training Data Frame
-    train_data = spark.read.option("delimiter", ",") \
-        .option('inferSchema', 'True') \
-        .option("header", "true") \
-        .csv(args.f)
-
-    # Reading in Testing Data Frame
-    test_data = spark.read.option("delimiter", ",") \
-        .option('inferSchema', 'True') \
-        .option("header", "true") \
-        .csv(args.p)
 
     # Checking argparse arguments
     if type(args.f) is str and type(args.p) is str:
-        # Calling Processing, string indexer, TDIF vectorization function on Training/Testing Data
+        train_data = spark.read.option("delimiter", ",") \
+            .option('inferSchema', 'True') \
+            .option("header", "true") \
+            .csv(args.f)
+        # Reading in Test Data Frame
+        test_data = spark.read.option("delimiter", ",") \
+            .option('inferSchema', 'True') \
+            .option("header", "true") \
+            .csv(args.p)
+
+        # Calling Processing, string indexer, TDIF vectorization function on Data frames
         # Testing Data does not Require string indexer because data has no class.
         df_train = processing_df(train_data)
         df_train = string_indexer(df_train)
         df_train = tdif_vectorization(df_train)
         df_test = processing_df(test_data)
         df_test = tdif_vectorization(df_test)
-        print('Training and Testing Data Cleaned')
+        print('Data Cleaned')
 
-        # Splitting Training Data to metrics
+        # Splitting Training Data for model Evaluation
         splits = df_train.randomSplit([0.8, 0.2], 1234)
         train = splits[0]
         test = splits[1]
@@ -117,6 +118,12 @@ def main():
 
         # Training model
         model = nb.fit(train)
+
+        # Saving/Overwriting Model
+        model.write().overwrite().save("NB_model")
+        print('Model Saved')
+
+        # Prediction based on test
         prediction = model.transform(test)
         prediction = prediction.withColumn('qualificationIndex', col('qualificationIndex').cast('double'))
         # prediction.show()
@@ -140,6 +147,80 @@ def main():
         # Predicting test file using trained model
         predicting_test = model.transform(df_test)
         predicting_test.show()
+
+    # If --p is not a string, it will just train the model and produce evaluation results
+    elif type(args.p) != str:
+        train_data = spark.read.option("delimiter", ",") \
+            .option('inferSchema', 'True') \
+            .option("header", "true") \
+            .csv(args.f)
+
+        df_train = processing_df(train_data)
+        df_train = string_indexer(df_train)
+        df_train = tdif_vectorization(df_train)
+        print('Data Cleaned')
+
+        # Splitting Training Data to metrics
+        splits = df_train.randomSplit([0.8, 0.2], 1234)
+        train = splits[0]
+        test = splits[1]
+
+        # Creating the trainer and set its parameters
+        nb = NaiveBayes(labelCol='qualificationIndex', smoothing=1.0, modelType="multinomial")
+
+        # Training model
+        model = nb.fit(train)
+
+        # Saving/overwriting model
+        model.write().overwrite().save("NB_model")
+        print('Model Saved')
+
+        # Prediction for training data for evaluation of model
+        prediction = model.transform(test)
+        prediction = prediction.withColumn('qualificationIndex', col('qualificationIndex').cast('double'))
+        # prediction.show()
+
+        # Evaluation
+        acc = MulticlassClassificationEvaluator(labelCol="qualificationIndex", predictionCol="prediction",
+                                                metricName="accuracy")
+        f1 = MulticlassClassificationEvaluator(labelCol="qualificationIndex", predictionCol="prediction",
+                                               metricName="f1")
+        precision = MulticlassClassificationEvaluator(labelCol="qualificationIndex", predictionCol="prediction",
+                                                      metricName="precisionByLabel")
+
+        accuracy = acc.evaluate(prediction)
+        F1 = f1.evaluate(prediction)
+        Precision = precision.evaluate(prediction)
+
+        print("Naive Bayes Model has been trained!")
+        print("Test set accuracy = " + str(accuracy))
+        print("Test set f1 = " + str(F1))
+        print("Test set Precision = " + str(Precision))
+
+    elif type(args.f) != str:
+        # Checking if model exists
+        if os.path.isdir('NB_model') is True:
+            # If model exists read in new test data
+            test_data = spark.read.option("delimiter", ",") \
+                .option('inferSchema', 'True') \
+                .option("header", "true") \
+                .csv(args.p)
+
+            # Cleaning New testing data.
+            df_test = processing_df(test_data)
+            df_test = tdif_vectorization(df_test)
+            print("Data Cleaned")
+            # df_test.show()
+
+            # Loading NB_model
+            loaded_model = NaiveBayesModel.load('NB_model')
+
+            # Classifying new data
+            predictionsDF = loaded_model.transform(df_test)
+            predictionsDF.show()
+
+        else:
+            print('No Training Model')
 
     spark.stop()
 
