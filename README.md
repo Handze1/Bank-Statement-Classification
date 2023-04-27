@@ -25,8 +25,10 @@
 
 
 -------
-OutPut:
+Output:
 
 ![image](https://user-images.githubusercontent.com/101682684/234975681-7a6068af-6db6-4bdc-babf-4030c712c263.png)
+
+![image](https://user-images.githubusercontent.com/101682684/234975842-26396403-5298-4c4e-8392-ca6ec615b9ec.png)
 
 
