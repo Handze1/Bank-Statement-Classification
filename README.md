@@ -24,3 +24,9 @@
 - --p is the testing file for prediction
 
 
+-------
+OutPut:
+
+![image](https://user-images.githubusercontent.com/101682684/234975681-7a6068af-6db6-4bdc-babf-4030c712c263.png)
+
+
