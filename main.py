@@ -1,12 +1,18 @@
 # Imported Libraries:
 import argparse
+import os
+import pandas as pd
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import *
 from pyspark.ml.feature import HashingTF, IDF, StringIndexer
 from pyspark.ml.classification import NaiveBayes, NaiveBayesModel
 from pyspark.ml.evaluation import MulticlassClassificationEvaluator
-import os
-import pandas as pd
+import plotly.express as px
+
+
+mapping = {0: 'Alcohol', 1: 'Food', 2: 'Other', 3: 'Venmo', 4: 'Ride',
+           5: 'Subscription', 6: 'Gas', 7: 'Healthcare', 8: 'Deposit',
+           9: 'Investments', 10: 'School'}
 
 
 def processing_df(df):
@@ -73,7 +79,6 @@ def tdif_vectorization(df):
 
 
 def main():
-
     # Using arg parse for command line to read test file for classification
     parser = argparse.ArgumentParser()
     parser.add_argument('--f', type=str, required=False)
@@ -86,13 +91,13 @@ def main():
         .master('local') \
         .getOrCreate()
 
-
     # Checking argparse arguments
     if type(args.f) is str and type(args.p) is str:
         train_data = spark.read.option("delimiter", ",") \
             .option('inferSchema', 'True') \
             .option("header", "true") \
             .csv(args.f)
+
         # Reading in Test Data Frame
         test_data = spark.read.option("delimiter", ",") \
             .option('inferSchema', 'True') \
@@ -100,7 +105,7 @@ def main():
             .csv(args.p)
 
         # Calling Processing, string indexer, TDIF vectorization function on Data frames
-        # Testing Data does not Require string indexer because data has no class.
+        # Testing Data does not require string indexer because data has no class.
         df_train = processing_df(train_data)
         df_train = string_indexer(df_train)
         df_train = tdif_vectorization(df_train)
@@ -120,7 +125,7 @@ def main():
         model = nb.fit(train)
 
         # Saving/Overwriting Model
-        model.write().overwrite().save("NB_model")
+        model.write().overwrite().save("/NB_model")
         print('Model Saved')
 
         # Prediction based on test
@@ -146,7 +151,37 @@ def main():
 
         # Predicting test file using trained model
         predicting_test = model.transform(df_test)
-        predicting_test.show()
+        # predicting_test.show()
+
+        predictionsDF = predicting_test.withColumn('prediction', col('prediction').cast('int'))
+        predictionsDF.show()
+
+        # Converting spark DF to pandas DF
+        predictionsDF = predictionsDF.toPandas()
+        spark.stop()
+
+        # Removing unnecessary columns
+        predictionsDF = predictionsDF.drop('rawFeatures', axis=1) \
+            .drop('features', axis=1) \
+            .drop('rawPrediction', axis=1) \
+            .drop('probability', axis=1)
+
+        # Mapping int predictions to string
+        predictionsDF = predictionsDF.replace({'prediction': mapping})
+
+        # # Spending Overview:
+        # # Pie Chart Figure Without Deposits
+        spending = predictionsDF[predictionsDF.prediction != 'Deposit']
+        # pie_chart = spending.groupby(["prediction"]).sum()
+        pie_fig = px.pie(spending, values='Amount', names='prediction', title='Breakdown of Spending')
+        pie_fig.show()
+
+        # Line chart
+        line_chart = predictionsDF[predictionsDF.prediction != 'Deposit'] \
+            .drop('prediction', axis=1) \
+            .groupby(['Date']).sum()
+        line_chart = px.line(line_chart, y="Amount", title='Spending Over Time')
+        line_chart.show()
 
     # If --p is not a string, it will just train the model and produce evaluation results
     elif type(args.p) != str:
@@ -196,6 +231,7 @@ def main():
         print("Test set accuracy = " + str(accuracy))
         print("Test set f1 = " + str(F1))
         print("Test set Precision = " + str(Precision))
+        spark.stop()
 
     elif type(args.f) != str:
         # Checking if model exists
@@ -217,12 +253,37 @@ def main():
 
             # Classifying new data
             predictionsDF = loaded_model.transform(df_test)
+            predictionsDF = predictionsDF.withColumn('prediction', col('prediction').cast('int'))
             predictionsDF.show()
+
+            # Converting spark DF to pandas DF
+            predictionsDF = predictionsDF.toPandas()
+            spark.stop()
+
+            predictionsDF = predictionsDF.drop('rawFeatures', axis=1) \
+                .drop('features', axis=1) \
+                .drop('rawPrediction', axis=1) \
+                .drop('probability', axis=1)
+
+            predictionsDF = predictionsDF.replace({'prediction': mapping})
+            # print(predictionsDF)
+
+            # Spending Overview:
+            # Pie Chart Figure Without Deposits
+            spending = predictionsDF[predictionsDF.prediction != 'Deposit']
+            pie_fig = px.pie(spending, values='Amount', names='prediction', title='Breakdown of Spending')
+            pie_fig.show()
+
+            # Line chart: Spending over time
+            line_chart = predictionsDF[predictionsDF.prediction != 'Deposit'] \
+                .drop('prediction', axis=1) \
+                .groupby(['Date']).sum()
+            line_chart = px.line(line_chart, y="Amount", title='Spending Over Time')
+            line_chart.show()
 
         else:
             print('No Training Model')
-
-    spark.stop()
+            spark.stop()
 
 
 if __name__ == '__main__':
